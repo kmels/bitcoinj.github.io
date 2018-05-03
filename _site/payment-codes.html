@@ -1,0 +1,246 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+<meta http-equiv="content-type" content="text/html; charset=UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Working with BIP47 payment codes</title>
+<link rel="icon" type="image/png" href="/favicon16.png" sizes="16x16">
+<link rel="icon" type="image/png" href="/favicon32.png" sizes="32x32">
+<link rel="stylesheet" type="text/css" href="/css/main.css" />
+<script type="text/javascript" src="/js/main.js"></script>
+</head>
+<body>
+
+<div class="headercontainer"><div class="header">
+<a href="/" class="logo"><img src="/img/bitcoinjlogo.svg"></a>
+<div class="menumobile" ontouchstart="menuShow(event)" onclick="menuShow(event)"></div>
+<div class="menucontainer" id="menucontainer" ontouchstart="menuScroll(event)">
+  <ul class="menu" id="menu">
+    <li><a href="/#introduction">Introduction</a></li>
+    <li><a href="/#getting-started">Getting started</a></li>
+    <li><a href="/#documentation">Documentation</a></li>
+    <li><a href="/#community">Community</a></li>
+  </ul>
+</div>
+</div></div>
+
+<div class="content">
+  <div id="toc" class="toc">
+  <div>
+
+<ul id="markdown-toc">
+  <li><a href="#working-with-bip47-payment-codes" id="markdown-toc-working-with-bip47-payment-codes">Working with BIP47 payment codes</a>    <ul>
+      <li><a href="#introduction" id="markdown-toc-introduction">Introduction</a></li>
+      <li><a href="#protocol-overview-version-1" id="markdown-toc-protocol-overview-version-1">Protocol overview (version 1)</a></li>
+      <li><a href="#creating-a-new-bip47-wallet" id="markdown-toc-creating-a-new-bip47-wallet">Creating a new BIP47 wallet</a></li>
+      <li><a href="#restoring-a-bip47-wallet-from-seed" id="markdown-toc-restoring-a-bip47-wallet-from-seed">Restoring a BIP47 wallet from seed</a></li>
+      <li><a href="#sending-a-transaction-to-a-payment-code" id="markdown-toc-sending-a-transaction-to-a-payment-code">Sending a transaction to a payment code</a>        <ul>
+          <li><a href="#listening-to-bip47-transactions" id="markdown-toc-listening-to-bip47-transactions">Listening to BIP47 transactions</a></li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+  </div>
+</div>
+
+<div class="toccontent">
+
+  <h1 id="working-with-bip47-payment-codes">Working with BIP47 payment codes</h1>
+
+  <h2 id="introduction">Introduction</h2>
+
+  <p>BIP47 payment codes are 80-byte BIP32 and BIP44 compatible addresses, designed to improve the privacy of the person who spends and receives. The implementation adds metadata to a bitcoinj wallet: payment codes to keep as contacts representing payment channels, used to generate deposit addresses specific to each channel and for each payment event.</p>
+
+  <p>In <a href="https://github.com/justusranvier/bips/blob/master/bip-0047.mediawiki#Version_1">version 1</a> of payment codes, currently implemented, the person initiates the channel by spending the minimum allowed amount (546 satoshis) in a notification transaction to the recipient. After this, the recipient can receive payments  coming from the payer.</p>
+
+  <p>In <a href="https://github.com/justusranvier/bips/commit/283aa14f77b633be67c647d294a35999723ce366#diff-182cbc866afabb49eef4dca7f3d38a96">version 2</a>, the change script of the notification transaction is modified so that the amount transfered is destined for the payer. In this way, the output to the notification address of the recipient is completely eliminated.</p>
+
+  <p>In <a href="https://github.com/OpenBitcoinPrivacyProject/bips/pull/8">version 3</a>, the reusability of payment addresses is generalized to be used in Bitcoin and in other blockchains too.</p>
+
+  <p>Some benefits when using this API are:</p>
+
+  <ul>
+    <li>Reusing a payment code without privacy leaks such as revelation of total balance.</li>
+    <li>Keeping the deposit address secret to senders and recipients.</li>
+    <li>Knowing which contact sent a payment and using his code to reimburse.</li>
+    <li>Preserving the ability to restore wallets from seeds.</li>
+    <li>Relying only on the bitcoin protocol and not in third party services.</li>
+  </ul>
+
+  <p>You can read the <a href="https://www.reddit.com/r/Bitcoin/comments/3alzga/bip47_reusable_payment_codes/">original announcement</a> or read <a href="https://medium.com/billion-crypto-stories/how-bip47-reusable-payment-codes-enrich-bitcoin-and-overall-cryptocurrency-user-experience-6f929c87a61b">how BIP47 is compared with Monero</a>.</p>
+
+  <h2 id="protocol-overview-version-1">Protocol overview (version 1)</h2>
+
+  <p>In a notification that Alice sends to Bob:</p>
+
+  <pre><code>0. Alice obtains Bob's payment code by some means external to the protocol.
+1. Alice takes the xpub to create a BIP32 hierarchy for Bob.
+2. Alice builds a transaction by sending the minimum allowed to Bob's notification address.
+3. Alice calculates a (shared) secret key with the private key of her first input and the public key associated with Bob's notifications address.
+4. Alice encrypts her payment code for Bob using the shared secret key wrapped in an OP_RETURN.
+5. Alice sends the transaction notifying Bob.
+</code></pre>
+
+  <p>In a notification that Bob receives from Alice:</p>
+
+  <pre><code>1. Bob identifies a transaction in his notification address and checks whether it contains an OP_RETURN with a valid payment code.
+2. Bob calculates the (shared) secret key using the private key of his notification address and the public key associated with the first input of Alice.
+3. Bob decrypts Alices's payment code using the shared secret key and adds her as a contact in his wallet.
+4. Bob generates the following N deposit addresses for Alice in his wallet and updates his bloom filters to monitor payment transactions.
+</code></pre>
+
+  <p>In a payment that Alice sends to Bob:</p>
+
+  <pre><code>1. Alice finds the next BIP44 child index not used for Bob (if it is the first payment in the channel, the child in index 1)
+2. Alice calculates a (shared) secret key using the private key associated with her notification address and the public key associated with the child selected for Bob.
+2. Alice finds a valid EC point that derives a public key that Bob will be watching.
+3. Alice uses Bob's public key to send him the transaction.
+4. Alice increases the child index to use for Bob in the future.
+</code></pre>
+
+  <p>In a payment that Bob receives from Alice:</p>
+
+  <pre><code>1. Bob generates another deposit address for Alice, keeping the following N directions of the channel monitored.
+</code></pre>
+
+  <p>Alice’s wallet persists Bob’s deposit address in the payment channel metadata, so she will associate this payment to Bob efficiently in the future. Bob’s wallet will generate a new deposit address and import it to his watch list.</p>
+
+  <h2 id="creating-a-new-bip47-wallet">Creating a new BIP47 wallet</h2>
+
+  <p><code class="highlighter-rouge">BIP47AppKit</code> is the class that allows to send and receive BIP47 payments. It takes network and coin name parameters to support various coins, such as BTC, tBTC, BCH or tBCH. It takes a folder as a parameter to save the wallet, blockstore and bip47 metadata files.</p>
+
+  <pre><code>String coin = "BTC";
+NetworkParameters params;
+File workingDir = new File("BIP47-Wallets");
+
+switch (coin){
+    case "BCH":
+        params = BCCMainNetParams.get();
+        break;
+    case "tBCH":
+        params = BCCTestNet3Params.get();
+        break;
+    case "BTC":
+        params = MainNetPArams.get();
+        break;
+    case "tBTC":
+        params = TestNet3Params.get();
+        break;
+}
+
+System.out.println("Creating new " + coin + " wallet ...");
+org.bitcoinj.core.Context.propagate(new org.bitcoinj.core.Context(params));
+BIP47AppKit bip47App = new BIP47AppKit(coin, params, workingDir, null);
+System.out.println("Creating new " + coin + " wallet ... done.");
+
+System.out.print("Adding progress tracker ...")
+class ProgressTracker extends BlockchainDownloadProgressTracker{
+    private double percentage;
+    public Listener(String coin){
+        super(coin);
+    }
+    @Override
+    protected void progress(double pct, int blocksSoFar, Date date) {
+      this.percentage = pct;
+    }
+    @Override
+    int getProgress() {
+        return (int)percentage;
+    }
+}
+bip47App.setBlockchainDownloadProgressTracker(new ProgressTracker())
+System.out.print("Adding progress tracker ... done.")
+
+System.out.print("Starting " + coin + " blockchain download ...")
+bip47App.startBlockchainDownload()
+System.out.print("Starting " + coin + " blockchain download ... done.")
+</code></pre>
+
+  <p>The wallet will connect to peers in the network and the download in the background. To check what the wallet’s last block is, see <code class="highlighter-rouge">bip47App.vWallet.getLastBlockSeenHeight().</code></p>
+
+  <h2 id="restoring-a-bip47-wallet-from-seed">Restoring a BIP47 wallet from seed</h2>
+
+  <p>The last parameter in the constructor of <code class="highlighter-rouge">BIP47AppKit</code> is a <code class="highlighter-rouge">DeterministicSeed</code> that holds the bytes for replaying the entire balance of a BIP47 wallet using a BIP39 mnemonic. The mnemonic is a phrase of words of length divisible by 3, of which the largest possible mnemonic is 24 words long.</p>
+
+  <pre><code>import org.bitcoinj.crypto;*;
+long bornDate = MnemonicCode.BIP39_STANDARDISATION_TIME_SECS;
+String mnemonic = "response seminar brave tip suit recall often sound stick owner lottery motion";
+DeterministicSeed seed = new DeterministicSeed(mnemonic, null, "", bornDate);
+BIP47AppKit bip47RestoredApp = new BIP47AppKit(coin, params, dir, seed);
+</code></pre>
+
+  <h2 id="sending-a-transaction-to-a-payment-code">Sending a transaction to a payment code</h2>
+
+  <p>Once a wallet is created and funded, it can establish a bip47 contact by making a payment.</p>
+
+  <pre><code>String bip47PaymentCode = "PM8TJS2JxQ5ztXUpBBRnpTbcUXbUHy2T1abfrb3KkAAtMEGNbey4oumH7Hc578WgQJhPjBxteQ5GHHToTYHE3A1w6p7tU6KSoFmWBVbFGjKPisZDbP97"
+
+Bip47AppKit bip47App = new BIP47AppKit(coin, params, dir, seed)
+
+SendRequest notification = bip47App.makeNotificationTransaction(bip47PaymentCode)
+
+Runnable callback = new Runnable() {
+      @Override
+      public void run() {
+         System.out.println("Transaction sent");
+      }
+  }
+
+Executor executor = Executors.newSingleThreadExecutor();
+
+bip47App.broadcastTransaction(notification.tx).addListener(callback, executor);
+
+bip47App.putPaymenCodeStatusSent(bip47PaymentCode, notification.tx);
+
+BIP47Channel paymentChannel = bip47App.getBip47MetaForPaymentCode(bip47PaymentCode);
+
+Address depositAddress;
+if (paymentChannel != null &amp;&amp; paymentChannel.isNotificationTransactionSent()) {
+   depositAddress = currentWallet().getCurrentOutgoingAddress(paymentChannel);
+}
+
+Coin amount = Coin.valueOf(1000);
+
+SendRequest payment = wallet.createSend(depositAddress, amount);
+
+bip47App.broadcastTransaction(payment.tx).addListener(callback, executor);
+</code></pre>
+
+  <p>When the wallet creates or receives a bip47 payment for the first time, a .bip47 file is created that contains the payment channels serialized. Every payment channel contains information such as whether the wallet has sent a notification transaction back, a list of deposit addresses seen receiving payments and addresses used for sending payments.</p>
+
+  <h3 id="listening-to-bip47-transactions">Listening to BIP47 transactions</h3>
+
+  <p>This portion of code listens to BIP47 transactions and prints the payment code that sent it.</p>
+
+  <pre><code>def bip47Listener = new TransactionEventListener() {
+    @Override
+    public void onTransactionReceived(BIP47AppKit app, Transaction tx) {
+
+        String paymentCode;
+        if (wallet.isNotificationTransaction(tx)) {
+            paymentCode = app.getPaymentCodeInNotificationTransaction(tx);
+            System.out.println("Received notification from payment code: "+ paymentCode);
+        } else if (app.isToBIP47Address(transaction)) {
+            String depositAddress = app.getAddressOfReceived(tx).toString();
+            paymentCode = wallet.getPaymentCodeForAddress(depositAddress);
+            System.out.println("Received payment from payment code: " + paymentCode)
+        }
+    }
+}
+
+BIP47AppKit bip47App = new BIP47AppKit(..)
+bip47App.addOnReceiveTransactionListener(bip47Listener);
+</code></pre>
+
+</div>
+
+</div>
+
+</body>
+
+<script>fallbackSVG();</script>
+<script>updateToc();</script>
+
+</html>
